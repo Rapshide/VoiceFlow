@@ -7,7 +7,7 @@ enum RecordingState {
     case recording
     case transcribing
     case postProcessing
-    case showingResult(DictationResult)
+    case showingResult   // text already pasted; panel shows a brief "✓ Done" pill
     case error(String)
 }
 
@@ -16,91 +16,98 @@ enum RecordingState {
 final class AppStateManager {
     static let shared = AppStateManager()
 
+    // MARK: - Transient state (not persisted)
+
     var state: RecordingState = .idle
-    var language: String = UserDefaults.standard.string(forKey: "language") ?? "hu"
     var frontmostAppPID: pid_t = 0
     var modelDownloadProgress: Double = 0.0
     var isModelLoaded: Bool = false
     var loadedModelName: String = ""
-
-    var recordingMode: RecordingMode {
-        get {
-            let raw = UserDefaults.standard.integer(forKey: "recordingMode")
-            return RecordingMode(rawValue: raw) ?? .pushToTalk
-        }
-        set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: "recordingMode")
-        }
-    }
-
-    var silenceTimeout: Double {
-        get {
-            let val = UserDefaults.standard.double(forKey: "silenceTimeout")
-            return val > 0 ? val : 1.5
-        }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "silenceTimeout")
-        }
-    }
-
-    var audioSource: AudioSourceSelection {
-        get {
-            let raw = UserDefaults.standard.integer(forKey: "audioSource")
-            return AudioSourceSelection(rawValue: raw) ?? .microphone
-        }
-        set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: "audioSource")
-        }
-    }
-
-    // MARK: - LLM Post-processing
-
-    var postProcessMode: PostProcessMode {
-        get {
-            let raw = UserDefaults.standard.string(forKey: "postProcessMode") ?? PostProcessMode.none.rawValue
-            return PostProcessMode(rawValue: raw) ?? .none
-        }
-        set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: "postProcessMode")
-        }
-    }
-
-    var ollamaModel: String {
-        get { UserDefaults.standard.string(forKey: "ollamaModel") ?? "" }
-        set { UserDefaults.standard.set(newValue, forKey: "ollamaModel") }
-    }
-
-    var customLLMPrompt: String {
-        get { UserDefaults.standard.string(forKey: "customLLMPrompt") ?? "" }
-        set { UserDefaults.standard.set(newValue, forKey: "customLLMPrompt") }
-    }
-
     var isOllamaAvailable: Bool = false
     var ollamaModels: [String] = []
+    /// Set briefly when the user toggles the audio source via hotkey — cleared after ~2 s.
+    var sourceNotification: String? = nil
 
-    // MARK: - Hotword
+    // MARK: - Persisted settings (stored properties so @Observable tracks them for UI updates)
 
-    var hotwordEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "hotwordEnabled") }
-        set { UserDefaults.standard.set(newValue, forKey: "hotwordEnabled") }
+    var language: String = UserDefaults.standard.string(forKey: "language") ?? "hu" {
+        didSet { UserDefaults.standard.set(language, forKey: "language") }
     }
 
-    var hotword: String {
-        get { UserDefaults.standard.string(forKey: "hotword") ?? "Voice" }
-        set { UserDefaults.standard.set(newValue, forKey: "hotword") }
+    var recordingMode: RecordingMode = {
+        let raw = UserDefaults.standard.integer(forKey: "recordingMode")
+        return RecordingMode(rawValue: raw) ?? .pushToTalk
+    }() {
+        didSet { UserDefaults.standard.set(recordingMode.rawValue, forKey: "recordingMode") }
     }
 
-    // MARK: - Hotkey
+    var silenceTimeout: Double = {
+        let v = UserDefaults.standard.double(forKey: "silenceTimeout")
+        return v > 0 ? v : 1.5
+    }() {
+        didSet { UserDefaults.standard.set(silenceTimeout, forKey: "silenceTimeout") }
+    }
 
-    var hotkeyOption: HotkeyOption {
-        get {
-            let raw = UserDefaults.standard.integer(forKey: "hotkeyCode")
-            return HotkeyOption(rawValue: raw) ?? .rightOption
+    var audioSource: AudioSourceSelection = {
+        let raw = UserDefaults.standard.integer(forKey: "audioSource")
+        return AudioSourceSelection(rawValue: raw) ?? .microphone
+    }() {
+        didSet { UserDefaults.standard.set(audioSource.rawValue, forKey: "audioSource") }
+    }
+
+    var postProcessMode: PostProcessMode = {
+        let raw = UserDefaults.standard.string(forKey: "postProcessMode") ?? PostProcessMode.none.rawValue
+        return PostProcessMode(rawValue: raw) ?? .none
+    }() {
+        didSet { UserDefaults.standard.set(postProcessMode.rawValue, forKey: "postProcessMode") }
+    }
+
+    var ollamaModel: String = UserDefaults.standard.string(forKey: "ollamaModel") ?? "" {
+        didSet { UserDefaults.standard.set(ollamaModel, forKey: "ollamaModel") }
+    }
+
+    var customLLMPrompt: String = UserDefaults.standard.string(forKey: "customLLMPrompt") ?? "" {
+        didSet { UserDefaults.standard.set(customLLMPrompt, forKey: "customLLMPrompt") }
+    }
+
+    var hotwordEnabled: Bool = UserDefaults.standard.bool(forKey: "hotwordEnabled") {
+        didSet { UserDefaults.standard.set(hotwordEnabled, forKey: "hotwordEnabled") }
+    }
+
+    var hotword: String = UserDefaults.standard.string(forKey: "hotword") ?? "Voice" {
+        didSet { UserDefaults.standard.set(hotword, forKey: "hotword") }
+    }
+
+    var recordingHotkey: HotkeyConfig = {
+        if let data = UserDefaults.standard.data(forKey: "recordingHotkey"),
+           let config = try? JSONDecoder().decode(HotkeyConfig.self, from: data) {
+            return config
         }
-        set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: "hotkeyCode")
+        let legacy = UserDefaults.standard.integer(forKey: "hotkeyCode")
+        return legacy != 0 ? HotkeyConfig.fromLegacyCode(legacy) : .defaultRecording
+    }() {
+        didSet {
+            if let data = try? JSONEncoder().encode(recordingHotkey) {
+                UserDefaults.standard.set(data, forKey: "recordingHotkey")
+            }
         }
     }
+
+    var sourceToggleHotkey: HotkeyConfig = {
+        if let data = UserDefaults.standard.data(forKey: "sourceToggleHotkey"),
+           let config = try? JSONDecoder().decode(HotkeyConfig.self, from: data) {
+            return config
+        }
+        return .defaultSourceToggle
+    }() {
+        didSet {
+            if let data = try? JSONEncoder().encode(sourceToggleHotkey) {
+                UserDefaults.standard.set(data, forKey: "sourceToggleHotkey")
+            }
+        }
+    }
+
+    // MARK: -
 
     private init() {}
 
@@ -112,10 +119,8 @@ final class AppStateManager {
 
     func setLanguage(_ lang: String) {
         language = lang
-        UserDefaults.standard.set(lang, forKey: "language")
     }
 
-    /// Clears the cached model path so the next load triggers a fresh download.
     func clearModelCache() {
         UserDefaults.standard.removeObject(forKey: "cachedModelFolderPath")
         isModelLoaded = false

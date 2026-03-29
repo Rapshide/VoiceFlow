@@ -2,23 +2,21 @@ import SwiftUI
 import ServiceManagement
 
 struct SettingsView: View {
-    @AppStorage("language") private var language = "hu"
     @AppStorage("launchAtLogin") private var launchAtLogin = false
     @State private var appState = AppStateManager.shared
-    @State private var isRedownloading = false
 
     private let languages = [("hu", "Hungarian"), ("en", "English")]
 
     var body: some View {
         Form {
             Section("Dictation") {
-                Picker("Language", selection: $language) {
+                Picker("Language", selection: Binding(
+                    get: { appState.language },
+                    set: { appState.language = $0 }
+                )) {
                     ForEach(languages, id: \.0) { code, name in
                         Text(name).tag(code)
                     }
-                }
-                .onChange(of: language) { _, newLang in
-                    appState.setLanguage(newLang)
                 }
             }
 
@@ -67,25 +65,38 @@ struct SettingsView: View {
                 }
 
                 if appState.audioSource == .systemAudio {
-                    Text("Captures all system audio output. Requires Screen Recording permission.")
+                    Text("Captures all system audio output. Requires Screen Recording permission. Always uses VAD auto-stop.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
 
-            Section("Hotkey") {
-                Picker("Hotkey", selection: Binding(
-                    get: { appState.hotkeyOption },
-                    set: { newOption in
-                        appState.hotkeyOption = newOption
-                        AppDelegateLocator.shared?.updateHotkey(newOption)
-                    }
-                )) {
-                    ForEach(HotkeyOption.allCases, id: \.self) { option in
-                        Text(option.displayName).tag(option)
-                    }
-                }
-                .pickerStyle(.segmented)
+            Section("Hotkeys") {
+                KeyRecorderView(
+                    hotkey: Binding(
+                        get: { appState.recordingHotkey },
+                        set: { config in
+                            appState.recordingHotkey = config
+                            AppDelegateLocator.shared?.updateRecordingHotkey(config)
+                        }
+                    ),
+                    label: "Record"
+                )
+
+                KeyRecorderView(
+                    hotkey: Binding(
+                        get: { appState.sourceToggleHotkey },
+                        set: { config in
+                            appState.sourceToggleHotkey = config
+                            AppDelegateLocator.shared?.updateSourceToggleHotkey(config)
+                        }
+                    ),
+                    label: "Switch Source"
+                )
+
+                Text("Click \"Record\" then press any key or modifier key. Switch Source toggles between Microphone and System Audio without opening Preferences.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Model") {

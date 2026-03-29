@@ -5,13 +5,26 @@ struct FloatingPanelView: View {
     @State var appState: AppStateManager
     weak var panel: FloatingPanel?
 
-    // Progressive word reveal state
-    @State private var revealedWords: [String] = []
-    @State private var wordTimer: Timer?
     @State private var dismissTimer: Timer?
 
     var body: some View {
         ZStack {
+            // Source-switched notification (shown while state is idle)
+            if let notification = appState.sourceNotification {
+                PillCard {
+                    HStack(spacing: 10) {
+                        Image(systemName: appState.audioSource == .microphone ? "mic.fill" : "speaker.wave.2.fill")
+                            .foregroundStyle(.blue)
+                        Text("Source: \(notification)")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(.primary)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            }
+
             switch appState.state {
             case .idle:
                 EmptyView()
@@ -20,8 +33,8 @@ struct FloatingPanelView: View {
                 PillCard {
                     HStack(spacing: 12) {
                         WaveformView()
-                        Text(appState.recordingMode == .vadToggle ? "Recording (auto-stop)…" : "Recording…")
-                            .font(.system(size: 16, weight: .medium, design: .default))
+                        Text(recordingLabel)
+                            .font(.system(size: 16, weight: .medium))
                             .foregroundStyle(.primary)
                     }
                     .padding(.horizontal, 20)
@@ -32,10 +45,9 @@ struct FloatingPanelView: View {
             case .transcribing:
                 PillCard {
                     HStack(spacing: 12) {
-                        ProgressView()
-                            .controlSize(.small)
+                        ProgressView().controlSize(.small)
                         Text("Transcribing…")
-                            .font(.system(size: 16, weight: .medium, design: .default))
+                            .font(.system(size: 16, weight: .medium))
                             .foregroundStyle(.primary)
                     }
                     .padding(.horizontal, 20)
@@ -46,10 +58,9 @@ struct FloatingPanelView: View {
             case .postProcessing:
                 PillCard {
                     HStack(spacing: 12) {
-                        ProgressView()
-                            .controlSize(.small)
+                        ProgressView().controlSize(.small)
                         Text("Cleaning up…")
-                            .font(.system(size: 16, weight: .medium, design: .default))
+                            .font(.system(size: 16, weight: .medium))
                             .foregroundStyle(.primary)
                     }
                     .padding(.horizontal, 20)
@@ -57,27 +68,21 @@ struct FloatingPanelView: View {
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.95)))
 
-            case .showingResult(let result):
+            case .showingResult:
                 PillCard {
-                    Text(revealedWords.joined(separator: " "))
-                        .font(.system(size: 16, weight: .medium, design: .default))
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: 560, alignment: .leading)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 14)
-                        .onTapGesture {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(result.text, forType: .string)
-                        }
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("Transcribed & pasted")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(.primary)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                .onAppear {
-                    startWordReveal(result: result)
-                }
-                .onDisappear {
-                    stopTimers()
-                }
+                .onAppear { scheduleDismiss(after: 2) }
+                .onDisappear { cancelDismiss() }
 
             case .error(let message):
                 PillCard {
@@ -92,85 +97,64 @@ struct FloatingPanelView: View {
                     .padding(.vertical, 14)
                 }
                 .transition(.opacity)
-                .onAppear {
-                    scheduleDismiss(after: 5)
-                }
+                .onAppear { scheduleDismiss(after: 5) }
+                .onDisappear { cancelDismiss() }
             }
         }
         .animation(.easeInOut(duration: 0.2), value: stateKey)
-        .onKeyPress(.escape) {
-            dismiss()
-            return .handled
-        }
+        .animation(.easeInOut(duration: 0.2), value: appState.sourceNotification != nil)
+        .onKeyPress(.escape) { dismiss(); return .handled }
         .onChange(of: stateKey) { _, newKey in
             if newKey == "idle" {
                 panel?.hide()
             } else {
                 panel?.show()
-                revealedWords = []
-                stopTimers()
             }
         }
+        .onChange(of: appState.sourceNotification) { _, newValue in
+            if newValue != nil {
+                panel?.show()
+            } else if case .idle = appState.state {
+                panel?.hide()
+            }
+        }
+    }
+
+    // MARK: - Helpers
+
+    private var recordingLabel: String {
+        if appState.audioSource == .systemAudio {
+            return "Recording — press \(appState.recordingHotkey.displayName) to stop"
+        }
+        return appState.recordingMode == .vadToggle ? "Recording (auto-stop)…" : "Recording…"
     }
 
     private var stateKey: String {
         switch appState.state {
-        case .idle: return "idle"
-        case .recording: return "recording"
-        case .transcribing: return "transcribing"
+        case .idle:           return "idle"
+        case .recording:      return "recording"
+        case .transcribing:   return "transcribing"
         case .postProcessing: return "postProcessing"
-        case .showingResult: return "result"
-        case .error: return "error"
-        }
-    }
-
-    private func startWordReveal(result: DictationResult) {
-        guard !result.words.isEmpty else {
-            revealedWords = result.text.components(separatedBy: " ").filter { !$0.isEmpty }
-            scheduleDismiss(after: 3)
-            return
-        }
-
-        revealedWords = []
-        var wordIndex = 0
-        let startTime = Date()
-
-        wordTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
-            guard wordIndex < result.words.count else {
-                timer.invalidate()
-                self.scheduleDismiss(after: 3)
-                return
-            }
-
-            let elapsed = Float(Date().timeIntervalSince(startTime))
-            while wordIndex < result.words.count && result.words[wordIndex].start <= elapsed {
-                self.revealedWords.append(result.words[wordIndex].word)
-                wordIndex += 1
-            }
+        case .showingResult:  return "result"
+        case .error:          return "error"
         }
     }
 
     private func scheduleDismiss(after seconds: TimeInterval) {
-        dismissTimer?.invalidate()
+        cancelDismiss()
         dismissTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { _ in
-            Task { @MainActor in
-                self.dismiss()
-            }
+            Task { @MainActor in self.dismiss() }
         }
     }
 
-    private func stopTimers() {
-        wordTimer?.invalidate()
-        wordTimer = nil
+    private func cancelDismiss() {
         dismissTimer?.invalidate()
         dismissTimer = nil
     }
 
     private func dismiss() {
-        stopTimers()
-        Task { @MainActor in
-            appState.state = .idle
-        }
+        cancelDismiss()
+        Task { @MainActor in appState.state = .idle }
     }
 }
 
@@ -211,7 +195,7 @@ struct WaveformView: View {
             }
         }
         .frame(height: 28)
-        .onAppear { phase = true }
+        .onAppear  { phase = true  }
         .onDisappear { phase = false }
     }
 }

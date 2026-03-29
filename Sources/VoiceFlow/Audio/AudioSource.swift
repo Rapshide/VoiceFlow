@@ -27,7 +27,7 @@ enum AudioSourceSelection: Int, CaseIterable {
 @MainActor
 protocol AudioSourceProtocol: AnyObject {
     func requestPermission() async -> Bool
-    func start() throws
+    func start() async throws
     func stop() -> [Float]
     func recentSamples(last n: Int) -> [Float]
 }

@@ -42,36 +42,44 @@ struct MenuBarView: View {
 
     private var statusIcon: String {
         switch appState.state {
-        case .idle: return "mic"
-        case .recording: return "mic.fill"
-        case .transcribing: return "waveform"
-        case .postProcessing: return "sparkles"
-        case .showingResult: return "checkmark.circle"
-        case .error: return "exclamationmark.triangle"
+        case .idle:
+            return appState.audioSource == .systemAudio ? "speaker.wave.2" : "mic"
+        case .recording:
+            return appState.audioSource == .systemAudio ? "speaker.wave.2.fill" : "mic.fill"
+        case .transcribing:    return "waveform"
+        case .postProcessing:  return "sparkles"
+        case .showingResult:   return "checkmark.circle"
+        case .error:           return "exclamationmark.triangle"
         }
     }
 
     private var statusColor: Color {
         switch appState.state {
-        case .idle: return .secondary
-        case .recording: return .red
+        case .idle:                          return .secondary
+        case .recording:                     return .red
         case .transcribing, .postProcessing: return .blue
-        case .showingResult: return .green
-        case .error: return .red
+        case .showingResult:                 return .green
+        case .error:                         return .red
         }
     }
 
     private var statusText: String {
+        let key = appState.recordingHotkey.displayName
         switch appState.state {
         case .idle:
-            return appState.recordingMode == .vadToggle
-                ? "Ready — press \(appState.hotkeyOption.displayName) to record"
-                : "Ready — hold \(appState.hotkeyOption.displayName) to record"
-        case .recording: return "Recording…"
-        case .transcribing: return "Transcribing…"
-        case .postProcessing: return "Cleaning up…"
-        case .showingResult: return "Done"
-        case .error(let msg): return "Error: \(msg)"
+            switch appState.audioSource {
+            case .systemAudio:
+                return "System Audio — press \(key) to record"
+            case .microphone:
+                return appState.recordingMode == .vadToggle
+                    ? "Microphone — press \(key) to record"
+                    : "Microphone — hold \(key) to record"
+            }
+        case .recording:       return "Recording…"
+        case .transcribing:    return "Transcribing…"
+        case .postProcessing:  return "Cleaning up…"
+        case .showingResult:   return "Done"
+        case .error(let msg):  return "Error: \(msg)"
         }
     }
 }

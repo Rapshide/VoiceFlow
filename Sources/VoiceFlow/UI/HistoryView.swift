@@ -5,6 +5,7 @@ struct HistoryView: View {
     @State var store: HistoryStore
     @State private var searchText = ""
     @State private var selectedEntry: HistoryEntry?
+    @FocusState private var isSearchFocused: Bool
 
     private var filtered: [HistoryEntry] {
         if searchText.isEmpty { return store.entries }
@@ -15,27 +16,55 @@ struct HistoryView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(filtered, selection: $selectedEntry) { entry in
-                HistoryRow(entry: entry)
-                    .tag(entry)
-                    .contextMenu {
-                        Button("Copy") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(entry.text, forType: .string)
+            VStack(spacing: 0) {
+                // Custom search field — avoids NavigationSplitView layout instability
+                // caused by the built-in .searchable modifier.
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Search transcriptions", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .focused($isSearchFocused)
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                            isSearchFocused = true
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
                         }
-                        Button("Delete", role: .destructive) {
-                            if selectedEntry?.id == entry.id { selectedEntry = nil }
-                            store.delete(entry)
-                        }
+                        .buttonStyle(.plain)
                     }
-            }
-            .searchable(text: $searchText, prompt: "Search transcriptions")
-            .toolbar {
-                ToolbarItem(placement: .destructiveAction) {
-                    Button("Clear All") { store.clearAll(); selectedEntry = nil }
-                        .disabled(store.entries.isEmpty)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(Color(nsColor: .controlBackgroundColor))
+
+                Divider()
+
+                List(filtered, selection: $selectedEntry) { entry in
+                    HistoryRow(entry: entry)
+                        .tag(entry)
+                        .contextMenu {
+                            Button("Copy") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(entry.text, forType: .string)
+                            }
+                            Button("Delete", role: .destructive) {
+                                if selectedEntry?.id == entry.id { selectedEntry = nil }
+                                store.delete(entry)
+                            }
+                        }
+                }
+                .listStyle(.sidebar)
+                .toolbar {
+                    ToolbarItem(placement: .destructiveAction) {
+                        Button("Clear All") { store.clearAll(); selectedEntry = nil }
+                            .disabled(store.entries.isEmpty)
+                    }
                 }
             }
+            .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
         } detail: {
             if let entry = selectedEntry {
                 HistoryDetailView(entry: entry)
@@ -43,6 +72,16 @@ struct HistoryView: View {
                 Text("Select a transcription")
                     .foregroundStyle(.secondary)
             }
+        }
+        // Auto-focus the search bar when the window opens or is brought to front.
+        .onReceive(NotificationCenter.default.publisher(for: .historyFocusSearch)) { _ in
+            isSearchFocused = true
+        }
+        // Redirect typing that occurred before the search field had focus.
+        .onReceive(NotificationCenter.default.publisher(for: .historyTypeCharacter)) { note in
+            guard let chars = note.object as? String else { return }
+            searchText += chars
+            isSearchFocused = true
         }
     }
 }
@@ -131,7 +170,7 @@ private struct HistoryDetailView: View {
     }
 }
 
-// MARK: - Export menu (placeholder, wired in Feature 2)
+// MARK: - Export menu
 
 struct ExportMenuButton: View {
     let entry: HistoryEntry

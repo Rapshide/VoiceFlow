@@ -20,7 +20,7 @@ final class AudioRecorder: AudioSourceProtocol {
         }
     }
 
-    func start() throws {
+    func start() async throws {
         buffer.removeAll()
         let inputNode = engine.inputNode
         let inputFormat = inputNode.inputFormat(forBus: 0)
