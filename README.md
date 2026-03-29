@@ -15,7 +15,7 @@ Built with Swift/SwiftUI + [WhisperKit](https://github.com/argmaxinc/WhisperKit)
 - **Universal paste** — result injected at the cursor via `NSPasteboard` + Cmd+V CGEvent; works in any app
 - **Hungarian + English** — explicit language selection; defaults to Hungarian
 - **On-device only** — WhisperKit with `whisper large-v3-turbo` via CoreML / Apple Neural Engine
-- **Floating UI** — always-on-top pill panel with animated waveform → spinner → progressive word reveal
+- **Floating UI** — always-on-top pill panel with animated waveform and status indicators
 - **Menu bar agent** — no Dock icon; keeps focus in your target app while pasting
 
 ### v2 — Power features
@@ -25,6 +25,14 @@ Built with Swift/SwiftUI + [WhisperKit](https://github.com/argmaxinc/WhisperKit)
 - **Hotword activation** — say your wake word (default: "Voice") to start recording hands-free
 - **LLM post-processing** — clean up grammar, reformat, summarize, or apply a custom prompt via a local [Ollama](https://ollama.com) model
 - **Export** — save transcriptions as Markdown, plain text, or JSON (single or batch)
+
+### v3 — Hotkey overhaul & UX polish
+- **Arbitrary hotkey recorder** — bind any key + any modifier combination (e.g. Right ⌥, ⌃⇧M, F5) via a live key recorder in Settings; multi-modifier combos detected order-independently
+- **Source-toggle hotkey** — switch between Microphone and System Audio instantly with a dedicated hotkey (default: ⌃⇧M), without opening Preferences; brief on-screen toast confirms the switch
+- **System audio push-to-stop** — press hotkey to start system audio recording (after GDPR consent), press again to stop and transcribe; mic is mixed in automatically
+- **History hotkey** — press ⌘⇧H from anywhere to open the History window
+- **History search auto-focus** — typing while the History window is focused redirects keystrokes to the search bar automatically
+- **History layout fix** — search no longer causes the split-view sidebar to resize unexpectedly
 
 ---
 
@@ -44,8 +52,8 @@ Built with Swift/SwiftUI + [WhisperKit](https://github.com/argmaxinc/WhisperKit)
 
 ```bash
 # Clone
-git clone https://github.com/YOUR_USERNAME/voiceflow.git
-cd voiceflow
+git clone https://github.com/Rapshide/VoiceFlow.git
+cd VoiceFlow
 
 # Build and sign the app bundle
 bash scripts/make-app.sh
@@ -76,23 +84,36 @@ On first launch, VoiceFlow downloads the `whisper large-v3-turbo` CoreML model (
 4. **Release** — transcription is pasted at the cursor
 
 ### VAD toggle mode
-1. Enable in **Preferences → Recording → Mode → VAD Toggle**
+1. Enable in **Settings → Recording → Mode → VAD Toggle**
 2. **Press** your hotkey once to start
 3. Speak — recording stops automatically after silence (configurable)
 4. Or press the hotkey again to stop manually
 
+### System audio recording
+1. Select **System Audio** in **Settings → Recording → Audio Source** (or press the source-toggle hotkey)
+2. **Press** your hotkey — a GDPR consent prompt appears; confirm to start
+3. Speak and/or let audio play — your mic and system audio are mixed together
+4. **Press** the hotkey again — transcription is pasted at the cursor
+
+### Hotkey customisation
+- Open **Settings → Hotkeys**
+- Click **Record** next to the hotkey you want to change
+- Press any key or modifier combination — release all keys to confirm
+- Press **Escape** to cancel
+
+### History
+- Press **⌘⇧H** from anywhere, or click **History…** in the menu bar
+- Start typing immediately to search — keystrokes go to the search bar automatically
+- Search, copy, delete individual entries, or export as Markdown / text / JSON
+
 ### Hotword activation
-1. Enable in **Preferences → Hotword**
+1. Enable in **Settings → Hotword**
 2. Set your wake word (default: `Voice`)
 3. Say your wake word — recording starts automatically
 
-### History
-- Click **History…** in the menu bar to browse past transcriptions
-- Search, copy, delete individual entries, or export as Markdown / text / JSON
-
 ### LLM post-processing
 1. Install [Ollama](https://ollama.com) and pull a model: `ollama pull llama3`
-2. Open **Preferences → Post-processing** and select a mode + model
+2. Open **Settings → Post-processing** and select a mode + model
 3. Transcriptions will be cleaned up / reformatted before pasting
 
 ---
@@ -109,6 +130,7 @@ Sources/VoiceFlow/
 │   ├── AudioSource.swift           Protocol + RecordingMode/AudioSourceSelection enums
 │   ├── AudioRecorder.swift         AVAudioEngine mic capture → 16kHz Float32
 │   ├── SystemAudioRecorder.swift   ScreenCaptureKit system audio capture
+│   ├── CombinedAudioRecorder.swift Mic + system audio mixed (hard-clip Float32)
 │   ├── VADMonitor.swift            EnergyVAD-based silence detection
 │   └── HotwordDetector.swift       Always-on mic + rolling WhisperKit wake word check
 ├── Transcription/
@@ -117,7 +139,8 @@ Sources/VoiceFlow/
 ├── Output/
 │   └── PasteEngine.swift           NSPasteboard save/restore + Cmd+V CGEvent
 ├── HotKey/
-│   └── GlobalHotkeyManager.swift   CGEventTap on flagsChanged
+│   ├── GlobalHotkeyManager.swift   CGEventTap — flagsChanged + keyDown/keyUp
+│   └── HotkeyConfig.swift          Codable hotkey struct (keyCode + modifiers)
 ├── History/
 │   ├── HistoryEntry.swift          Codable entry struct
 │   └── HistoryStore.swift          JSON persistence, 500-entry limit
@@ -128,9 +151,10 @@ Sources/VoiceFlow/
 │   └── PostProcessMode.swift       Mode enum with system prompts
 └── UI/
     ├── FloatingPanel.swift         Borderless .floating NSPanel
-    ├── FloatingPanelView.swift     Waveform / spinner / word-reveal / post-processing states
-    ├── HistoryWindow.swift         NSWindowController wrapper
-    ├── HistoryView.swift           NavigationSplitView with search + export
+    ├── FloatingPanelView.swift     Waveform / spinner / result / source-notification states
+    ├── HistoryWindow.swift         NSWindowController + key-redirect monitor
+    ├── HistoryView.swift           NavigationSplitView with custom search + FocusState
+    ├── KeyRecorderView.swift       Live hotkey capture with multi-modifier support
     ├── MenuBarView.swift           Status + History + Preferences + Quit
     └── SettingsView.swift          All preferences
 ```
