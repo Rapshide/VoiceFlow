@@ -1,0 +1,8 @@
+.build/
+*.o
+*.d
+*.swp
+.DS_Store
+VoiceFlow.app/
+*.xcuserstate
+xcuserdata/
